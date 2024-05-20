@@ -36,6 +36,15 @@ end top2;
 architecture Behavioral of top2 is
 
 -------------------
+component SSD is
+    Port (  clk : in STD_LOGIC; -- 1 KHz Clock
+            Number : in STD_LOGIC_VECTOR ( 9 downto 0); -- binary number input
+            Segment : out STD_LOGIC_VECTOR ( 6 downto 0); -- SSD output
+            an : out STD_LOGIC_VECTOR ( 3 downto 0); -- anode output
+            mode: in STD_LOGIC_VECTOR ( 2 downto 0)
+          );
+end component;
+
 component debouncer
         Generic(
             DEBNC_CLOCKS : integer;
@@ -124,8 +133,8 @@ signal RST_HC_front : std_logic := '0'; --initially turned off assuming power of
 signal RST_HC_back  : std_logic := '0'; --initially turned off assuming power of
 
 -- Functionality signals
-type states is (Modes, Sensor_en, Sensor_choose, dis_control, Data_Process);
-signal state : states:= Modes;
+type states is (Sensor_en, Sensor_choose, dis_control, Data_Process);
+signal state : states:= Sensor_en;
 
 signal led_intermediate           : std_logic_vector(15 downto 0);
 signal buzzer_output_intermediate : std_logic;
@@ -150,6 +159,16 @@ signal TEMP		 	: std_logic_vector (12 downto 0) := (others => '0');
 
 begin
 -------------------
+seven_seg : SSD 
+PORT MAP( 
+	CLK 		=> CLK 		    ,
+    mode        => mode         ,
+    number      => temp         ,	
+    an          => an           ,
+    segment     => seg
+);
+
+
 GY_530_front : GY_530
 GENERIC MAP(
 	c_clkfreq		=> c_clkfreq		,
@@ -217,25 +236,6 @@ port map(SIGNAL_I => sens_ena_btn, CLK_I => clk, SIGNAL_O => sens_ena_btn_d);
 
 
 -------------------
-an <= "0000";
-
-with sevsegval select
-        seg <= "1000000" when 0, -- 0
-               "1111001" when 1, -- 1
-               "0100100" when 2, -- 2 
-               "1000000" when 3, -- 3
-               "1111001" when 4, -- 4
-               "0100100" when 5, -- 5
-               "1000000" when 6, -- 6
-               "1111001" when 7, -- 7
-               "0100100" when 8, -- 8
-               "1000000" when 9, -- 9
-               "0011000" when 10, -- P
-               "0111000" when 11, -- F
-               "0001000" when 12, -- R
-               "1111111" when others; -- POWER off has value 10 which is in others
-    
-
 receive_UART:process(CLK) 
 begin
 if (rising_edge(CLK)) then
@@ -271,37 +271,20 @@ led_intermediate <= (others => '0');
 buzzer_output_intermediate <= '0';
  
 
-
 elsif (rising_edge(CLK)) then
 
 
     case (state) is
-	
-	when Modes =>
-	
-	       if (mode = "00") then -- P mode
-	           sevsegval <= 0;
-	           -- no change in state as no sensor is needed in this mode
-	       elsif(mode = "10") then -- R mode
-	           sevsegval <= 2;
-	           state <= Sensor_en; -- next state will be sensor enable/disable
-	       elsif(mode = "01") then -- D mode
-	           sevsegval <= 1;
-	           state <= Sensor_en; -- next state will be sensor enable/disable
-	       else 
-	           sevsegval <= 0;
-	           -- no change in state as no sensor is needed in this mode
-	       end if;
-	       
-	       TX_done <= '0';
 	    
 	
 	when  Sensor_en =>
 	        if (state_t0 = off) then
-	                   state <= Modes;  
+	                   state <= Sensor_en;  
 	        elsif (state_t1 = onn) then
 	                   state <= Sensor_choose;
 	        end if;
+	        
+	        TX_done <= '0';
 	
 	when Sensor_choose =>
 	       
@@ -356,7 +339,7 @@ elsif (rising_edge(CLK)) then
 
 	   if (TX_DONE_TICK = '1') then
 		  TX_START	<= '0';
-		  state <= Modes; -- in the second clock
+		  state <= Sensor_en; -- in the second clock
 		  TX_done	<= '1'; -- ??
 	   end if;
         
@@ -369,7 +352,7 @@ end process;
 
 buzzer_led_output: process(clk, TX_done) -- bunu data process caseine de koyabiliriz s?k?nt? ç?karabilir
 begin
--- led, buzzer, display atamas?
+-- led, buzzer atamas?
 
 -- temp data will be processed by sayg?de?er 
 --Ata Bilgin and intermediate buzzer and led outputs will be determined

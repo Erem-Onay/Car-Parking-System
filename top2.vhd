@@ -38,10 +38,10 @@ architecture Behavioral of top2 is
 -------------------
 component SSD is
     Port (  clk : in STD_LOGIC; -- 1 KHz Clock
-            Number : in STD_LOGIC_VECTOR ( 9 downto 0); -- binary number input
+            Number : in STD_LOGIC_VECTOR ( 12 downto 0); -- binary number input
             Segment : out STD_LOGIC_VECTOR ( 6 downto 0); -- SSD output
             an : out STD_LOGIC_VECTOR ( 3 downto 0); -- anode output
-            mode: in STD_LOGIC_VECTOR ( 2 downto 0)
+            mode: in STD_LOGIC_VECTOR ( 1 downto 0)
           );
 end component;
 
@@ -64,11 +64,11 @@ generic (
 );
 port ( 
 	CLK 			: IN STD_LOGIC;
-	RST_GY 			: IN STD_LOGIC; -- will not be input dependent automatically handled by the program
+	RST_N 			: IN STD_LOGIC; -- will not be input dependent automatically handled by the program
 	SCL 			: INOUT STD_LOGIC;
 	SDA 			: INOUT STD_LOGIC;
 	INTERRUPT 		: OUT STD_LOGIC;
-	TEMP 			: OUT STD_LOGIC_VECTOR (15 DOWNTO 0) -- Sensor transfers 2 byte
+	TEMP 			: OUT STD_LOGIC_VECTOR (12 DOWNTO 0) -- Sensor transfers 2 byte
 );
 end component;
 
@@ -138,7 +138,7 @@ signal state : states:= Sensor_en;
 
 signal led_intermediate           : std_logic_vector(15 downto 0);
 signal buzzer_output_intermediate : std_logic;
-signal sevsegval                  : integer range 0 to 12 := 0; -- initially power off
+
 
 signal mode                       : std_logic_vector(1 downto 0):= "00"; -- drive/reverse/park mode
 
@@ -151,6 +151,10 @@ signal sens_ena_btn_d_re  : std_logic;
 
  type tState is (onn, off); -- to show that the enumerated states can be arbitrary names 
     signal state_t0, state_t1: tState; 
+
+signal counter : INTEGER := 0; 
+signal clk_divider : INTEGER := 0; -- will be used for buzzer
+constant base_freq : INTEGER := 1000;     -- Base frequency for buzzer in Hz
 
 
 signal TEMP		 	: std_logic_vector (12 downto 0) := (others => '0');
@@ -177,7 +181,7 @@ GENERIC MAP(
 )
 PORT MAP( 
 	CLK 		=> CLK 		    ,
-	RST_GY 		=> RST_GY_front 		,
+	RST_N 		=> RST_GY_front 		,
 	SCL 		=> SCL 		    ,
 	SDA 		=> SDA 		    ,
 	INTERRUPT 	=> INTERRUPT 	,
@@ -192,7 +196,7 @@ GENERIC MAP(
 )
 PORT MAP( 
 	CLK 		=> CLK 		    ,
-	RST_GY 		=> RST_GY_back 		,
+	RST_N 		=> RST_GY_back 		,
 	SCL 		=> SCL_2 		    ,
 	SDA 		=> SDA_2 	    ,
 	INTERRUPT 	=> INTERRUPT 	,
@@ -243,7 +247,7 @@ if (rising_edge(CLK)) then
 if (RX_DONE_TICK = '1') then
 	       if( dout = "01010010") then  -- R, reverse mode
 	           mode <= "10";
-	       elsif ( dout = "01000110") then --F, drive mode
+	       elsif ( dout = "01000110") then -- F, drive mode
 	           mode <= "01";
 	       elsif ( dout = "01010000") then -- P , park mode
 	           mode <= "00";
@@ -259,12 +263,14 @@ state_machine:process (CLK)
 begin
 
 if (PWR = '0') then
-
--- Disables all the sensors
-rst_gy_front <= '0';
-rst_gy_back <= '0';
-rst_hc_front <= '0';
-rst_hc_back <= '0';
+    
+    led_intermediate(15 downto 0)	<= "0000000000000000";
+    
+---- Disables all the sensors
+--rst_gy_front <= '0';  -- no need to use these signals 
+--rst_gy_back <= '0';
+--rst_hc_front <= '0';
+--rst_hc_back <= '0';
 
 -- Turns off all the outputs to leds, seven segment and buzzer
 led_intermediate <= (others => '0');
@@ -288,18 +294,21 @@ elsif (rising_edge(CLK)) then
 	
 	when Sensor_choose =>
 	       
+	       if ( mode = "00") then  -- button does not work in the Park mode
+	           state <= Sensor_en;
+	           	        
 	       -- assume distance greater than 2m and start using hc
 	       -- control the data in the next stage
 	       
-	       if (mode = "01") then -- drive mode
+	       elsif (mode = "01") then -- drive mode
 	               -- TEMP <= TEMP3; -- hc front
+	               state <= dis_control;
 	             
 	       elsif (mode = "10") then  -- reverse mode
 	               -- TEMP <= TEMP4; -- hc back
+	               state <= dis_control;
 	            
-	       end if;
-	       
-	       state <= dis_control;
+	       end if;	      
 	       
 	       
 	when dis_control =>     
@@ -350,13 +359,84 @@ elsif (rising_edge(CLK)) then
 end if;
 end process;
 
-buzzer_led_output: process(clk, TX_done) -- bunu data process caseine de koyabiliriz s?k?nt? ç?karabilir
-begin
--- led, buzzer atamas?
+------------- 
+buzzer_led_output: process(TX_done) 
+begin   -- 16 LEDs is going to be used for distance 
+        if (to_integer(unsigned(TEMP)) < 25) then
+               led_intermediate(15 downto 0)	<= "1111111111111111";
+               clk_divider <= c_clkfreq / (base_freq * 150);
+        elsif (to_integer(unsigned(TEMP)) < 50) then
+               led_intermediate(15 downto 0)	<= "0111111111111111";
+               clk_divider <= c_clkfreq / (base_freq * 140);
+        elsif (to_integer(unsigned(TEMP)) < 75) then
+               led_intermediate(15 downto 0)	<= "0011111111111111";
+               clk_divider <= c_clkfreq / (base_freq * 130);
+        elsif (to_integer(unsigned(TEMP)) < 100) then
+               led_intermediate(15 downto 0)	<= "0001111111111111";
+               clk_divider <= c_clkfreq / (base_freq * 120);
+        elsif (to_integer(unsigned(TEMP)) < 125) then
+               led_intermediate(15 downto 0)	<= "0000111111111111";
+               clk_divider <= c_clkfreq / (base_freq * 110);
+        elsif (to_integer(unsigned(TEMP)) < 150) then
+               led_intermediate(15 downto 0)	<= "0000011111111111";
+               clk_divider <= c_clkfreq / (base_freq * 100);
+        elsif (to_integer(unsigned(TEMP)) < 175) then
+               led_intermediate(15 downto 0)	<= "0000001111111111";
+               clk_divider <= c_clkfreq / (base_freq * 90);
+        elsif (to_integer(unsigned(TEMP)) < 200) then
+               led_intermediate(15 downto 0)	<= "0000000111111111";
+               clk_divider <= c_clkfreq / (base_freq * 80);
+        elsif (to_integer(unsigned(TEMP)) < 225) then
+               led_intermediate(15 downto 0)	<= "0000000011111111";
+               clk_divider <= c_clkfreq / (base_freq * 70);
+        elsif (to_integer(unsigned(TEMP)) < 250) then
+               led_intermediate(15 downto 0)	<= "0000000001111111";
+               clk_divider <= c_clkfreq / (base_freq * 60);
+        elsif (to_integer(unsigned(TEMP)) < 275) then
+               led_intermediate(15 downto 0)	<= "0000000000111111";
+               clk_divider <= c_clkfreq / (base_freq * 50);
+        elsif (to_integer(unsigned(TEMP)) < 300) then
+               led_intermediate(15 downto 0)	<= "0000000000011111";
+               clk_divider <= c_clkfreq / (base_freq * 40);
+        elsif (to_integer(unsigned(TEMP)) < 325) then
+               led_intermediate(15 downto 0)	<= "0000000000001111";
+               clk_divider <= c_clkfreq / (base_freq * 30);
+        elsif (to_integer(unsigned(TEMP)) < 350) then
+               led_intermediate(15 downto 0)	<= "0000000000000111";
+               clk_divider <= c_clkfreq / (base_freq * 20);
+        elsif (to_integer(unsigned(TEMP)) < 375) then
+               led_intermediate(15 downto 0)	<= "0000000000000011";
+               clk_divider <= c_clkfreq / (base_freq * 10);
+        else 
+               led_intermediate(15 downto 0)	<= "0000000000000001";
+               clk_divider <= c_clkfreq / (base_freq * 1);
+        end if;                      
 
 -- temp data will be processed by sayg?de?er 
 --Ata Bilgin and intermediate buzzer and led outputs will be determined
 end process;
+------------- 
+
+------------- 
+buzzer_loop:  process(clk)
+begin
+    if (rising_edge(clk)) then
+    
+        if mode = "00" then  -- in P mode, buzzer will be off 
+            buzzer_output_intermediate <= '0';
+        
+        else 
+            if counter >= clk_divider then
+                counter <= 0;
+                buzzer_output_intermediate <= not buzzer_output_intermediate;
+            else
+                counter <= counter + 1;
+            end if;
+         end if;
+     end if;
+    end process;
+-------------         
+
 
 
 -------------  debouncer part, inspired from lab2
